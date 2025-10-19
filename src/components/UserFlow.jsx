@@ -1,18 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { supabase, getUserIP, getDeviceInfo } from '../utils/supabase';
-
-// Importaremos los componentes de pasos después
-// import Step1Welcome from './user/Step1Welcome';
-// import Step2Question from './user/Step2Question';
-// import Step3Rating from './user/Step3Rating';
-// import Step4ThankYou from './user/Step4ThankYou';
-// import LoadingScreen from './user/LoadingScreen';
-// import ErrorPopup from './user/ErrorPopup';
+import { supabase } from '../utils/supabase';
 
 /**
- * UserFlow - Componente principal que maneja todo el flujo del usuario
- * 
- * FLUJO:
+ * FLUJO COMPLETO DEL USUARIO
  * 1. Bienvenida (nombre + edad)
  * 2. Pregunta 1 → Loading → (Correcto: avanza | Incorrecto: reintenta)
  * 3. Pregunta 2 → Loading → (Correcto: avanza | Incorrecto: reintenta)
@@ -75,7 +65,7 @@ const UserFlow = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [sessionId]);
+  }, [sessionId, isLoading, currentStep]);
 
   /**
    * Inicializar sesión en Supabase
@@ -111,22 +101,29 @@ const UserFlow = () => {
    * Manejar actualizaciones de Realtime
    * El admin modificó la sesión
    */
-const handleSessionUpdate = (payload) => {
-  const updatedSession = payload.new;
-  
-  console.log('🔔 Sesión actualizada:', updatedSession);
-  console.log('📊 waiting_for_admin:', updatedSession.waiting_for_admin);
-  console.log('📊 isLoading:', isLoading);
-  console.log('📊 current_step DB:', updatedSession.current_step, 'vs local:', currentStep);
+  const handleSessionUpdate = (payload) => {
+    const updatedSession = payload.new;
+    
+    console.log('🔔 Sesión actualizada:', updatedSession);
+    console.log('📊 waiting_for_admin:', updatedSession.waiting_for_admin);
+    console.log('📊 isLoading:', isLoading);
+    console.log('📊 current_step DB:', updatedSession.current_step, 'vs local:', currentStep);
 
-  // Si waiting_for_admin cambió a false = admin respondió
-  if (!updatedSession.waiting_for_admin && isLoading) {
-    console.log('✅ ENTRANDO AL IF - Admin respondió');
+    // SINCRONIZAR current_step si están desincronizados
+    if (updatedSession.current_step !== currentStep && !isLoading) {
+      console.log('🔄 Sincronizando step:', currentStep, '→', updatedSession.current_step);
+      setCurrentStep(updatedSession.current_step);
+    }
+
+    // Si waiting_for_admin cambió a false = admin respondió
+    if (!updatedSession.waiting_for_admin && isLoading) {
+      console.log('✅ ENTRANDO AL IF - Admin respondió');
       setIsLoading(false);
 
       // ¿Admin aprobó la respuesta?
       if (updatedSession.current_step > currentStep) {
         // CORRECTO - Avanzar al siguiente paso
+        console.log('✅ Respuesta CORRECTA - Avanzando a paso', updatedSession.current_step);
         setCurrentStep(updatedSession.current_step);
         // Limpiar respuesta para siguiente pregunta
         setAnswers({ ...answers, [`answer_${currentStep - 1}`]: '' });
@@ -135,6 +132,7 @@ const handleSessionUpdate = (payload) => {
         const message = updatedSession.temp_admin_message || 
           'Tu respuesta es incorrecta. Por favor, intenta de nuevo.';
         
+        console.log('❌ Respuesta INCORRECTA - Mostrando error');
         setErrorMessage(message);
         setShowError(true);
 
@@ -160,11 +158,13 @@ const handleSessionUpdate = (payload) => {
    * PASO 1: Guardar nombre y edad
    */
   const handleWelcomeSubmit = async (name, age) => {
+    console.log('📝 Guardando nombre y edad:', name, age);
+    
     setUserName(name);
     setUserAge(age);
 
     // Actualizar sesión en Supabase
-    await supabase
+    const { error } = await supabase
       .from('sessions')
       .update({
         user_name: name,
@@ -174,6 +174,12 @@ const handleSessionUpdate = (payload) => {
       })
       .eq('id', sessionId);
 
+    if (error) {
+      console.error('❌ Error al guardar bienvenida:', error);
+      return;
+    }
+
+    console.log('✅ Avanzando a pregunta 1');
     // Avanzar al paso 2 (Pregunta 1)
     setCurrentStep(2);
   };
@@ -182,6 +188,11 @@ const handleSessionUpdate = (payload) => {
    * PASOS 2, 3, 4: Enviar respuesta de pregunta
    */
   const handleQuestionSubmit = async (questionNumber, answer) => {
+    console.log('📤 Enviando respuesta:', answer);
+    
+    // PRIMERO mostrar loading
+    setIsLoading(true);
+    
     // Guardar respuesta localmente
     setAnswers({ ...answers, [`answer_${questionNumber}`]: answer });
 
@@ -198,17 +209,18 @@ const handleSessionUpdate = (payload) => {
 
     if (error) {
       console.error('Error al guardar respuesta:', error);
+      setIsLoading(false); // Quitar loading si hay error
       return;
     }
 
-    // Mostrar loading (esperando al admin)
-    setIsLoading(true);
+    console.log('✅ Respuesta guardada, esperando admin...');
   };
 
   /**
    * Cerrar popup de error y limpiar respuesta
    */
   const handleErrorClose = () => {
+    console.log('🔄 Cerrando popup de error, usuario puede reintentar');
     setShowError(false);
     setErrorMessage('');
     // Usuario puede volver a intentar
@@ -238,9 +250,6 @@ const handleSessionUpdate = (payload) => {
    * RENDERIZAR COMPONENTE SEGÚN PASO ACTUAL
    */
   const renderCurrentStep = () => {
-    // Por ahora solo mostramos mensajes simples
-    // En el siguiente paso crearemos los componentes reales
-    
     if (isLoading) {
       return (
         <div className="text-center">
@@ -379,6 +388,26 @@ const handleSessionUpdate = (payload) => {
       {renderCurrentStep()}
     </div>
   );
+};
+
+// Utilidades
+const getUserIP = async () => {
+  try {
+    const response = await fetch('https://api.ipify.org?format=json');
+    const data = await response.json();
+    return data.ip;
+  } catch (error) {
+    return 'unknown';
+  }
+};
+
+const getDeviceInfo = () => {
+  return {
+    userAgent: navigator.userAgent,
+    platform: navigator.platform,
+    language: navigator.language,
+    screenResolution: `${window.screen.width}x${window.screen.height}`
+  };
 };
 
 export default UserFlow;

@@ -5,25 +5,27 @@ const AdminDashboard = ({ onLogout }) => {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Cargar sesiones inicialmente
   useEffect(() => {
     loadSessions();
-    subscribeToSessions();
+    const cleanup = setupRealtimeSubscription();
+    return cleanup;
   }, []);
 
-  // Cargar todas las sesiones
+  /**
+   * Cargar sesiones activas desde Supabase
+   */
   const loadSessions = async () => {
     try {
       const { data, error } = await supabase
         .from('sessions')
         .select('*')
-        .neq('status', 'obsolete')
-        .order('last_activity', { ascending: false });
+        .eq('status', 'active')
+        .order('created_at', { ascending: false });
 
       if (error) throw error;
 
       setSessions(data || []);
-      console.log('📊 Sesiones cargadas:', data?.length);
+      console.log('✅ Sesiones cargadas:', data?.length);
     } catch (error) {
       console.error('❌ Error cargando sesiones:', error);
     } finally {
@@ -31,36 +33,55 @@ const AdminDashboard = ({ onLogout }) => {
     }
   };
 
-  // Suscribirse a cambios en tiempo real
-  const subscribeToSessions = () => {
+  /**
+   * Configurar suscripción a cambios en tiempo real
+   */
+  const setupRealtimeSubscription = () => {
     const channel = supabase
-      .channel('admin_sessions')
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'sessions' },
+      .channel('sessions_channel')
+      .on(
+        'postgres_changes',
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'sessions'
+        },
         (payload) => {
-          console.log('🔔 Cambio detectado:', payload);
+          console.log('📡 Admin - Cambio detectado:', payload.eventType, payload.new || payload.old);
           
           if (payload.eventType === 'INSERT') {
-            setSessions(prev => [payload.new, ...prev]);
+            // Solo agregar si es sesión activa
+            if (payload.new.status === 'active') {
+              setSessions(prev => [...prev, payload.new]);
+              console.log('✅ Nueva sesión agregada al admin');
+            }
           } else if (payload.eventType === 'UPDATE') {
-            setSessions(prev => prev.map(s => 
-              s.id === payload.new.id ? payload.new : s
-            ));
+            setSessions(prev => 
+              prev.map(s => s.id === payload.new.id ? payload.new : s)
+            );
+            console.log('✅ Sesión actualizada en admin');
           } else if (payload.eventType === 'DELETE') {
             setSessions(prev => prev.filter(s => s.id !== payload.old.id));
+            console.log('✅ Sesión eliminada del admin');
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log('📡 Admin Realtime status:', status);
+      });
 
     return () => {
       supabase.removeChannel(channel);
     };
   };
 
-  // Marcar respuesta como CORRECTA
+  /**
+   * Marcar respuesta como CORRECTA
+   */
   const handleCorrect = async (session) => {
     try {
+      console.log('✅ Marcando respuesta como CORRECTA para sesión:', session.id);
+      
       const { error } = await supabase
         .from('sessions')
         .update({
@@ -77,9 +98,13 @@ const AdminDashboard = ({ onLogout }) => {
     }
   };
 
-  // Marcar respuesta como INCORRECTA
+  /**
+   * Marcar respuesta como INCORRECTA
+   */
   const handleIncorrect = async (session, customMessage = null) => {
     try {
+      console.log('❌ Marcando respuesta como INCORRECTA para sesión:', session.id);
+      
       const updates = {
         waiting_for_admin: false,
         last_activity: new Date().toISOString()
@@ -87,6 +112,7 @@ const AdminDashboard = ({ onLogout }) => {
 
       if (customMessage) {
         updates.temp_admin_message = customMessage;
+        console.log('💬 Mensaje personalizado:', customMessage);
       }
 
       const { error } = await supabase
@@ -101,9 +127,13 @@ const AdminDashboard = ({ onLogout }) => {
     }
   };
 
-  // Finalizar (enviar a thank you)
+  /**
+   * Finalizar (enviar a thank you)
+   */
   const handleFinalize = async (session) => {
     try {
+      console.log('🏁 Finalizando sesión:', session.id);
+      
       const { error } = await supabase
         .from('sessions')
         .update({
@@ -120,9 +150,13 @@ const AdminDashboard = ({ onLogout }) => {
     }
   };
 
-  // Reiniciar usuario
+  /**
+   * Reiniciar usuario
+   */
   const handleRestart = async (session) => {
     try {
+      console.log('🔄 Reiniciando sesión:', session.id);
+      
       const { error } = await supabase
         .from('sessions')
         .update({
