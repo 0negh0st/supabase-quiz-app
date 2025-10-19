@@ -111,13 +111,17 @@ const UserFlow = () => {
    * Manejar actualizaciones de Realtime
    * El admin modificó la sesión
    */
-  const handleSessionUpdate = (payload) => {
-    const updatedSession = payload.new;
-    
-    console.log('🔔 Sesión actualizada:', updatedSession);
+const handleSessionUpdate = (payload) => {
+  const updatedSession = payload.new;
+  
+  console.log('🔔 Sesión actualizada:', updatedSession);
+  console.log('📊 waiting_for_admin:', updatedSession.waiting_for_admin);
+  console.log('📊 isLoading:', isLoading);
+  console.log('📊 current_step DB:', updatedSession.current_step, 'vs local:', currentStep);
 
-    // Si waiting_for_admin cambió a false = admin respondió
-    if (!updatedSession.waiting_for_admin && isLoading) {
+  // Si waiting_for_admin cambió a false = admin respondió
+  if (!updatedSession.waiting_for_admin && isLoading) {
+    console.log('✅ ENTRANDO AL IF - Admin respondió');
       setIsLoading(false);
 
       // ¿Admin aprobó la respuesta?
