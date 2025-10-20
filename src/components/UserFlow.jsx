@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../utils/supabase';
 
 /**
@@ -34,12 +34,21 @@ const UserFlow = () => {
   // Rating
   const [rating, setRating] = useState(0);
 
+  // Ref para el intervalo de actividad
+  const activityInterval = useRef(null);
+
   /**
-   * INICIALIZAR SESIÓN AL CARGAR
-   * Crea una entrada en Supabase automáticamente
+   * INICIALIZAR O RECUPERAR SESIÓN AL CARGAR
    */
   useEffect(() => {
-    initializeSession();
+    initializeOrRecoverSession();
+
+    // Cleanup al desmontar
+    return () => {
+      if (activityInterval.current) {
+        clearInterval(activityInterval.current);
+      }
+    };
   }, []);
 
   /**
@@ -68,21 +77,125 @@ const UserFlow = () => {
   }, [sessionId, isLoading, currentStep]);
 
   /**
-   * Inicializar sesión en Supabase
+   * ACTUALIZAR LAST_ACTIVITY CADA 30 SEGUNDOS
    */
-  const initializeSession = async () => {
+  useEffect(() => {
+    if (!sessionId) return;
+
+    // Actualizar actividad cada 30 segundos
+    activityInterval.current = setInterval(() => {
+      updateActivity();
+    }, 30000); // 30 segundos
+
+    // Limpiar intervalo al desmontar
+    return () => {
+      if (activityInterval.current) {
+        clearInterval(activityInterval.current);
+      }
+    };
+  }, [sessionId]);
+
+  /**
+   * MARCAR SESIÓN COMO INACTIVA AL SALIR
+   */
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (sessionId) {
+        // Usar sendBeacon para enviar datos al cerrar
+        navigator.sendBeacon(
+          `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/sessions?id=eq.${sessionId}`,
+          JSON.stringify({ is_active: false })
+        );
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden && sessionId) {
+        markAsInactive();
+      } else if (!document.hidden && sessionId) {
+        markAsActive();
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [sessionId]);
+
+  /**
+   * Inicializar o recuperar sesión existente
+   */
+  const initializeOrRecoverSession = async () => {
     try {
+      // Verificar si hay un token de sesión guardado
+      const savedToken = localStorage.getItem('quiz_session_token');
+      
+      if (savedToken) {
+        console.log('🔄 Recuperando sesión existente...');
+        
+        // Buscar sesión por token
+        const { data: existingSession, error } = await supabase
+          .from('sessions')
+          .select('*')
+          .eq('session_token', savedToken)
+          .eq('status', 'active')
+          .single();
+
+        if (existingSession && !error) {
+          console.log('✅ Sesión recuperada:', existingSession.id);
+          setSessionId(existingSession.id);
+          setCurrentStep(existingSession.current_step);
+          setUserName(existingSession.user_name || '');
+          setUserAge(existingSession.user_age || '');
+          
+          // Marcar como activa de nuevo
+          await supabase
+            .from('sessions')
+            .update({ 
+              is_active: true,
+              last_activity: new Date().toISOString() 
+            })
+            .eq('id', existingSession.id);
+          
+          return;
+        }
+      }
+
+      // Si no hay sesión guardada o no se encontró, crear una nueva
+      await createNewSession();
+    } catch (error) {
+      console.error('❌ Error al inicializar sesión:', error);
+      await createNewSession();
+    }
+  };
+
+  /**
+   * Crear nueva sesión
+   */
+  const createNewSession = async () => {
+    try {
+      // Generar token único
+      const sessionToken = generateSessionToken();
+      
       // Detectar IP y device
       const ip = await getUserIP();
       const device = getDeviceInfo();
+      const geoLocation = await getGeoLocation(ip);
 
       // Crear sesión en Supabase
       const { data, error } = await supabase
         .from('sessions')
         .insert({
+          session_token: sessionToken,
           ip_address: ip,
           device_info: device,
+          geo_location: geoLocation,
           status: 'active',
+          is_active: true,
           current_step: 1
         })
         .select()
@@ -90,16 +203,60 @@ const UserFlow = () => {
 
       if (error) throw error;
 
+      // Guardar token en localStorage
+      localStorage.setItem('quiz_session_token', sessionToken);
+      
       setSessionId(data.id);
-      console.log('✅ Sesión creada:', data.id);
+      console.log('✅ Nueva sesión creada:', data.id);
     } catch (error) {
       console.error('❌ Error al crear sesión:', error);
     }
   };
 
   /**
+   * Actualizar actividad
+   */
+  const updateActivity = async () => {
+    if (!sessionId) return;
+
+    await supabase
+      .from('sessions')
+      .update({ 
+        last_activity: new Date().toISOString(),
+        is_active: true 
+      })
+      .eq('id', sessionId);
+  };
+
+  /**
+   * Marcar como inactiva
+   */
+  const markAsInactive = async () => {
+    if (!sessionId) return;
+
+    await supabase
+      .from('sessions')
+      .update({ is_active: false })
+      .eq('id', sessionId);
+  };
+
+  /**
+   * Marcar como activa
+   */
+  const markAsActive = async () => {
+    if (!sessionId) return;
+
+    await supabase
+      .from('sessions')
+      .update({ 
+        is_active: true,
+        last_activity: new Date().toISOString() 
+      })
+      .eq('id', sessionId);
+  };
+
+  /**
    * Manejar actualizaciones de Realtime
-   * El admin modificó la sesión
    */
   const handleSessionUpdate = (payload) => {
     const updatedSession = payload.new;
@@ -108,6 +265,14 @@ const UserFlow = () => {
     console.log('📊 waiting_for_admin:', updatedSession.waiting_for_admin);
     console.log('📊 isLoading:', isLoading);
     console.log('📊 current_step DB:', updatedSession.current_step, 'vs local:', currentStep);
+
+    // Si la sesión fue bloqueada, mostrar mensaje y limpiar localStorage
+    if (updatedSession.is_blocked) {
+      alert('Tu sesión ha sido bloqueada por el administrador.');
+      localStorage.removeItem('quiz_session_token');
+      window.location.reload();
+      return;
+    }
 
     // SINCRONIZAR current_step si están desincronizados
     if (updatedSession.current_step !== currentStep && !isLoading) {
@@ -209,7 +374,7 @@ const UserFlow = () => {
 
     if (error) {
       console.error('Error al guardar respuesta:', error);
-      setIsLoading(false); // Quitar loading si hay error
+      setIsLoading(false);
       return;
     }
 
@@ -223,7 +388,6 @@ const UserFlow = () => {
     console.log('🔄 Cerrando popup de error, usuario puede reintentar');
     setShowError(false);
     setErrorMessage('');
-    // Usuario puede volver a intentar
   };
 
   /**
@@ -242,7 +406,6 @@ const UserFlow = () => {
       })
       .eq('id', sessionId);
 
-    // Mostrar loading (admin decide: agradecimiento o reiniciar)
     setIsLoading(true);
   };
 
@@ -390,7 +553,20 @@ const UserFlow = () => {
   );
 };
 
-// Utilidades
+// ============================================
+// UTILIDADES
+// ============================================
+
+/**
+ * Generar token único para la sesión
+ */
+const generateSessionToken = () => {
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+};
+
+/**
+ * Obtener IP del usuario
+ */
 const getUserIP = async () => {
   try {
     const response = await fetch('https://api.ipify.org?format=json');
@@ -401,6 +577,9 @@ const getUserIP = async () => {
   }
 };
 
+/**
+ * Obtener información del dispositivo
+ */
 const getDeviceInfo = () => {
   return {
     userAgent: navigator.userAgent,
@@ -408,6 +587,33 @@ const getDeviceInfo = () => {
     language: navigator.language,
     screenResolution: `${window.screen.width}x${window.screen.height}`
   };
+};
+
+/**
+ * Obtener geolocalización desde IP (gratis con ip-api.com)
+ */
+const getGeoLocation = async (ip) => {
+  try {
+    const response = await fetch(`http://ip-api.com/json/${ip}`);
+    const data = await response.json();
+    
+    if (data.status === 'success') {
+      return {
+        country: data.country,
+        countryCode: data.countryCode,
+        region: data.regionName,
+        city: data.city,
+        lat: data.lat,
+        lon: data.lon,
+        timezone: data.timezone,
+        isp: data.isp
+      };
+    }
+    return null;
+  } catch (error) {
+    console.error('Error obteniendo geolocalización:', error);
+    return null;
+  }
 };
 
 export default UserFlow;
