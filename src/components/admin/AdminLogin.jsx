@@ -15,15 +15,41 @@ const AdminLogin = ({ onLoginSuccess }) => {
     setLoading(true);
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
+      // 1. Autenticar con Supabase Auth
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
-      if (error) throw error;
+      if (authError) throw authError;
 
-      console.log('✅ Admin autenticado:', data.user.email);
-      onLoginSuccess();
+      // 2. Verificar que el usuario esté en admin_users y esté activo
+      const { data: adminData, error: adminError } = await supabase
+        .from('admin_users')
+        .select('*')
+        .eq('auth_user_id', authData.user.id)
+        .eq('is_active', true)
+        .single();
+
+      if (adminError || !adminData) {
+        // Usuario no es admin o está inactivo
+        await supabase.auth.signOut();
+        throw new Error('No tienes permisos para acceder al panel de administración');
+      }
+
+      // 3. Actualizar último login
+      await supabase
+        .from('admin_users')
+        .update({ last_login: new Date().toISOString() })
+        .eq('id', adminData.id);
+
+      console.log('✅ Admin autenticado:', {
+        email: adminData.email,
+        role: adminData.role,
+        name: adminData.full_name
+      });
+
+      onLoginSuccess(adminData);
     } catch (error) {
       console.error('❌ Error login:', error);
       setError(error.message || 'Error al iniciar sesión');
@@ -49,6 +75,7 @@ const AdminLogin = ({ onLoginSuccess }) => {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
+            autoComplete="email"
           />
 
           <Input
@@ -58,6 +85,7 @@ const AdminLogin = ({ onLoginSuccess }) => {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
+            autoComplete="current-password"
           />
 
           {error && (
@@ -74,6 +102,12 @@ const AdminLogin = ({ onLoginSuccess }) => {
             Iniciar sesión
           </Button>
         </form>
+
+        <div className="mt-6 text-center">
+          <p className="text-xs text-gray-500">
+            Si olvidaste tu contraseña, contacta al Super Admin
+          </p>
+        </div>
       </div>
     </div>
   );
