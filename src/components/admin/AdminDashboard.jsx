@@ -7,9 +7,8 @@ const AdminDashboard = ({ onLogout, adminData }) => {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('active');
   const [darkMode, setDarkMode] = useState(false);
-  const [selectedSession, setSelectedSession] = useState(null);
-  const [showModal, setShowModal] = useState(false);
   const [showModPanel, setShowModPanel] = useState(false);
+  const [openDropdown, setOpenDropdown] = useState(null);
 
   const isSuperAdmin = adminData?.role === 'super_admin';
 
@@ -18,13 +17,25 @@ const AdminDashboard = ({ onLogout, adminData }) => {
     subscribeToSessions();
   }, []);
 
+  // Cerrar dropdown al hacer click fuera
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (openDropdown && !event.target.closest('.dropdown-container')) {
+        setOpenDropdown(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [openDropdown]);
+
   const loadSessions = async () => {
     try {
       const { data, error } = await supabase
         .from('sessions')
         .select('*')
         .neq('status', 'obsolete')
-        .order('last_activity', { ascending: false });
+        .order('last_activity', { ascending: false});
 
       if (error) throw error;
 
@@ -76,6 +87,7 @@ const AdminDashboard = ({ onLogout, adminData }) => {
 
       if (error) throw error;
       console.log('✅ Respuesta marcada como correcta');
+      setOpenDropdown(null);
     } catch (error) {
       console.error('❌ Error:', error);
     }
@@ -99,6 +111,7 @@ const AdminDashboard = ({ onLogout, adminData }) => {
 
       if (error) throw error;
       console.log('❌ Respuesta marcada como incorrecta');
+      setOpenDropdown(null);
     } catch (error) {
       console.error('❌ Error:', error);
     }
@@ -117,6 +130,7 @@ const AdminDashboard = ({ onLogout, adminData }) => {
 
       if (error) throw error;
       console.log('🏁 Usuario enviado a thank you');
+      setOpenDropdown(null);
     } catch (error) {
       console.error('❌ Error:', error);
     }
@@ -139,25 +153,7 @@ const AdminDashboard = ({ onLogout, adminData }) => {
 
       if (error) throw error;
       console.log('🔄 Usuario reiniciado');
-    } catch (error) {
-      console.error('❌ Error:', error);
-    }
-  };
-
-  const handleGoToStep = async (session, step) => {
-    try {
-      const { error } = await supabase
-        .from('sessions')
-        .update({
-          current_step: step,
-          waiting_for_admin: false,
-          last_activity: new Date().toISOString()
-        })
-        .eq('id', session.id);
-
-      if (error) throw error;
-      console.log(`📍 Usuario movido al paso ${step}`);
-      setShowModal(false);
+      setOpenDropdown(null);
     } catch (error) {
       console.error('❌ Error:', error);
     }
@@ -183,7 +179,7 @@ const AdminDashboard = ({ onLogout, adminData }) => {
 
       if (error) throw error;
       console.log('🚫 IP bloqueada');
-      setShowModal(false);
+      setOpenDropdown(null);
     } catch (error) {
       console.error('❌ Error:', error);
     }
@@ -223,10 +219,10 @@ const AdminDashboard = ({ onLogout, adminData }) => {
     return labels[step] || 'Desconocido';
   };
 
-  const getTimeSinceActivity = (lastActivity) => {
+  const getTimeSince = (timestamp) => {
     const now = new Date();
-    const last = new Date(lastActivity);
-    const diffMs = now - last;
+    const then = new Date(timestamp);
+    const diffMs = now - then;
     const diffMins = Math.floor(diffMs / 60000);
     
     if (diffMins < 1) return 'Ahora';
@@ -235,6 +231,15 @@ const AdminDashboard = ({ onLogout, adminData }) => {
     
     const diffHours = Math.floor(diffMins / 60);
     return diffHours === 1 ? '1 hora' : `${diffHours} horas`;
+  };
+
+  const getDeviceIcon = (deviceInfo) => {
+    if (!deviceInfo) return '🖥️';
+    const info = deviceInfo.toLowerCase();
+    if (info.includes('mobile') || info.includes('android') || info.includes('iphone')) {
+      return '📱';
+    }
+    return '🖥️';
   };
 
   if (loading) {
@@ -323,7 +328,7 @@ const AdminDashboard = ({ onLogout, adminData }) => {
           </div>
         </div>
 
-        {/* PANEL DE MODERADORES (Solo Super Admin) */}
+        {/* PANEL DE MODERADORES */}
         {showModPanel && isSuperAdmin && (
           <ModeratorManagement 
             darkMode={darkMode} 
@@ -366,217 +371,193 @@ const AdminDashboard = ({ onLogout, adminData }) => {
           </div>
         </div>
 
-        {/* LISTA DE SESIONES */}
-        <div className="space-y-4">
-          {displaySessions.length === 0 ? (
-            <div className={`${darkMode ? 'bg-gray-800 text-gray-400' : 'bg-white text-gray-600'} rounded-lg shadow p-8 text-center`}>
-              <div className="text-4xl mb-4">📭</div>
-              <p className="text-lg">No hay sesiones {activeTab === 'active' ? 'activas' : 'inactivas'}</p>
-            </div>
-          ) : (
-            displaySessions.map((session) => (
-              <div
-                key={session.id}
-                className={`${
-                  darkMode ? 'bg-gray-800' : 'bg-white'
-                } rounded-lg shadow p-6 hover:shadow-lg transition`}
-              >
-                <div className="flex items-start justify-between">
-                  {/* INFO */}
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      <h3 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-                        {session.user_name || 'Usuario'} ({session.user_age || '?'} años)
-                      </h3>
-                      {session.is_blocked && (
-                        <span className="px-2 py-1 bg-red-100 text-red-700 text-xs rounded-full font-medium">
-                          🚫 Bloqueado
-                        </span>
-                      )}
-                      {session.waiting_for_admin && (
-                        <span className="px-2 py-1 bg-yellow-100 text-yellow-700 text-xs rounded-full font-medium animate-pulse">
-                          ⏳ Esperando
-                        </span>
-                      )}
-                    </div>
-                    
-                    <div className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'} space-y-1`}>
-                      <p>📍 <strong>Paso:</strong> {getStepLabel(session.current_step)}</p>
-                      <p>🕐 <strong>Actividad:</strong> {getTimeSinceActivity(session.last_activity)}</p>
-                      <p>🌍 <strong>IP:</strong> {session.ip_address || 'Desconocido'}</p>
-                    </div>
-
-                    {/* Mostrar respuesta si está esperando */}
-                    {session.waiting_for_admin && (
-                      <div className="mt-4 p-4 bg-blue-50 border-l-4 border-blue-500 rounded">
-                        <p className="font-medium text-blue-900 mb-2">
-                          Respuesta del usuario:
-                        </p>
-                        <p className="text-blue-800">
-                          {session[`answer_${session.current_step - 1}`] || 'Sin respuesta'}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Rating si está en paso 5 */}
-                    {session.current_step === 5 && session.rating && (
-                      <div className="mt-4 p-4 bg-yellow-50 border-l-4 border-yellow-500 rounded">
-                        <p className="font-medium text-yellow-900 mb-2">
-                          Calificación:
-                        </p>
-                        <div className="flex items-center gap-1">
-                          {[...Array(5)].map((_, i) => (
-                            <span key={i} className="text-2xl">
-                              {i < session.rating ? '⭐' : '☆'}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* ACCIONES */}
-                  <div className="flex flex-col gap-2 ml-4">
-                    {/* Ver detalles */}
-                    <button
-                      onClick={() => {
-                        setSelectedSession(session);
-                        setShowModal(true);
-                      }}
-                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition whitespace-nowrap"
+        {/* TABLA DE SESIONES */}
+        <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg shadow overflow-hidden`}>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className={darkMode ? 'bg-gray-700' : 'bg-gray-50'}>
+                <tr>
+                  <th className={`px-4 py-3 text-left text-xs font-semibold uppercase ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>User #</th>
+                  <th className={`px-4 py-3 text-left text-xs font-semibold uppercase ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Nombre</th>
+                  <th className={`px-4 py-3 text-left text-xs font-semibold uppercase ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Edad</th>
+                  <th className={`px-4 py-3 text-left text-xs font-semibold uppercase ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Paso</th>
+                  <th className={`px-4 py-3 text-left text-xs font-semibold uppercase ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>R1</th>
+                  <th className={`px-4 py-3 text-left text-xs font-semibold uppercase ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>R2</th>
+                  <th className={`px-4 py-3 text-left text-xs font-semibold uppercase ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>R3</th>
+                  <th className={`px-4 py-3 text-left text-xs font-semibold uppercase ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Rating</th>
+                  <th className={`px-4 py-3 text-center text-xs font-semibold uppercase ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Gestionar</th>
+                </tr>
+              </thead>
+              <tbody>
+                {displaySessions.length === 0 ? (
+                  <tr>
+                    <td colSpan="9" className={`px-4 py-8 text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                      No hay sesiones {activeTab === 'active' ? 'activas' : 'inactivas'}
+                    </td>
+                  </tr>
+                ) : (
+                  displaySessions.map((session) => (
+                    <tr 
+                      key={session.id}
+                      className={`border-b ${
+                        darkMode ? 'border-gray-700' : 'border-gray-200'
+                      } ${
+                        session.waiting_for_admin 
+                          ? 'bg-yellow-50 dark:bg-yellow-900/20' 
+                          : darkMode ? 'bg-gray-800' : 'bg-white'
+                      } hover:${darkMode ? 'bg-gray-700' : 'bg-gray-50'} transition`}
                     >
-                      👁️ Ver Detalles
-                    </button>
-
-                    {/* Acciones según estado */}
-                    {session.waiting_for_admin && (
-                      <>
+                      <td className={`px-4 py-3 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-900'}`}>
+                        #{session.user_number || session.id.slice(0, 8)}
+                        {session.waiting_for_admin && (
+                          <span className="ml-2 inline-block w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></span>
+                        )}
+                      </td>
+                      <td className={`px-4 py-3 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-900'}`}>
+                        {session.user_name || '-'}
+                      </td>
+                      <td className={`px-4 py-3 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-900'}`}>
+                        {session.user_age || '-'}
+                      </td>
+                      <td className={`px-4 py-3 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-900'}`}>
+                        {session.current_step}/6 - {getStepLabel(session.current_step)}
+                      </td>
+                      <td className={`px-4 py-3 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-900'}`}>
+                        {session.answer_1 || '-'}
+                      </td>
+                      <td className={`px-4 py-3 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-900'}`}>
+                        {session.answer_2 || '-'}
+                      </td>
+                      <td className={`px-4 py-3 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-900'}`}>
+                        {session.answer_3 || '-'}
+                      </td>
+                      <td className={`px-4 py-3 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-900'}`}>
+                        {session.rating ? `${session.rating}⭐` : '-'}
+                      </td>
+                      <td className="px-4 py-3 text-center relative dropdown-container">
                         <button
-                          onClick={() => handleCorrect(session)}
-                          className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition"
+                          onClick={() => setOpenDropdown(openDropdown === session.id ? null : session.id)}
+                          className={`p-2 rounded hover:${darkMode ? 'bg-gray-700' : 'bg-gray-100'} transition`}
                         >
-                          ✅ Correcto
+                          <span className="text-lg">⋮</span>
                         </button>
-                        <button
-                          onClick={() => handleIncorrect(session)}
-                          className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition"
-                        >
-                          ❌ Incorrecto
-                        </button>
-                      </>
-                    )}
 
-                    {/* Rating esperando */}
-                    {session.current_step === 5 && session.waiting_for_admin && (
-                      <button
-                        onClick={() => handleFinalize(session)}
-                        className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition"
-                      >
-                        🏁 Finalizar
-                      </button>
-                    )}
+                        {/* DROPDOWN MENU */}
+                        {openDropdown === session.id && (
+                          <div className={`absolute right-0 mt-2 w-80 ${darkMode ? 'bg-gray-700' : 'bg-white'} rounded-lg shadow-xl border ${darkMode ? 'border-gray-600' : 'border-gray-200'} z-50`}>
+                            {/* INFO */}
+                            <div className={`p-4 border-b ${darkMode ? 'border-gray-600' : 'border-gray-200'}`}>
+                              <div className="space-y-2 text-xs">
+                                <div className="flex items-center gap-2">
+                                  <span>{getDeviceIcon(session.device_info)}</span>
+                                  <span className={darkMode ? 'text-gray-300' : 'text-gray-700'}>
+                                    {session.device_info || 'Desconocido'}
+                                  </span>
+                                </div>
+                                <div className={darkMode ? 'text-gray-400' : 'text-gray-600'}>
+                                  <strong>IP:</strong> {session.ip_address || 'N/A'}
+                                </div>
+                                <div className={darkMode ? 'text-gray-400' : 'text-gray-600'}>
+                                  <strong>Ingreso:</strong> {new Date(session.created_at).toLocaleString()}
+                                </div>
+                                <div className={darkMode ? 'text-gray-400' : 'text-gray-600'}>
+                                  <strong>Última actividad:</strong> {getTimeSince(session.last_activity)}
+                                </div>
+                                <div className={darkMode ? 'text-gray-400' : 'text-gray-600'}>
+                                  <strong>Estado:</strong> {session.status === 'active' ? '🟢 Activo' : '🔴 Inactivo'}
+                                </div>
+                              </div>
+                            </div>
 
-                    {/* Reiniciar */}
-                    <button
-                      onClick={() => handleRestart(session)}
-                      className="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700 transition"
-                    >
-                      🔄 Reiniciar
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+                            {/* RESPUESTA SI ESPERA */}
+                            {session.waiting_for_admin && (
+                              <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 border-b dark:border-gray-600">
+                                <p className="text-xs font-semibold text-yellow-800 dark:text-yellow-300 mb-1">
+                                  Respuesta del usuario:
+                                </p>
+                                <p className="text-sm text-yellow-900 dark:text-yellow-200">
+                                  {session[`answer_${session.current_step - 1}`] || 'Sin respuesta'}
+                                </p>
+                              </div>
+                            )}
 
-        {/* MODAL DE DETALLES */}
-        {showModal && selectedSession && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className={`${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-lg p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto`}>
-              <div className="flex justify-between items-start mb-4">
-                <h2 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-                  Detalles de Sesión
-                </h2>
-                <button
-                  onClick={() => setShowModal(false)}
-                  className="text-gray-500 hover:text-gray-700 text-2xl"
-                >
-                  ×
-                </button>
-              </div>
+                            {/* ACCIONES */}
+                            <div className="p-3 space-y-2">
+                              {/* Botones para preguntas */}
+                              {session.waiting_for_admin && session.current_step >= 2 && session.current_step <= 4 && (
+                                <>
+                                  <button
+                                    onClick={() => handleCorrect(session)}
+                                    className="w-full px-3 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700 transition"
+                                  >
+                                    ✅ Marcar Correcta
+                                  </button>
+                                  <button
+                                    onClick={() => handleIncorrect(session)}
+                                    className="w-full px-3 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-700 transition"
+                                  >
+                                    ❌ Marcar Incorrecta
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      const msg = prompt('Mensaje personalizado para el usuario:');
+                                      if (msg) handleIncorrect(session, msg);
+                                    }}
+                                    className="w-full px-3 py-2 bg-orange-600 text-white text-sm rounded hover:bg-orange-700 transition"
+                                  >
+                                    💬 Enviar Mensaje
+                                  </button>
+                                </>
+                              )}
 
-              <div className={`space-y-4 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                <div>
-                  <p className="font-semibold">Usuario:</p>
-                  <p>{selectedSession.user_name || 'N/A'}</p>
-                </div>
-                <div>
-                  <p className="font-semibold">Edad:</p>
-                  <p>{selectedSession.user_age || 'N/A'}</p>
-                </div>
-                <div>
-                  <p className="font-semibold">IP Address:</p>
-                  <p>{selectedSession.ip_address || 'Desconocido'}</p>
-                </div>
-                <div>
-                  <p className="font-semibold">Device Info:</p>
-                  <p>{selectedSession.device_info || 'Desconocido'}</p>
-                </div>
-                <div>
-                  <p className="font-semibold">Paso actual:</p>
-                  <p>{getStepLabel(selectedSession.current_step)}</p>
-                </div>
-                <div>
-                  <p className="font-semibold">Respuestas:</p>
-                  <ul className="list-disc list-inside">
-                    {selectedSession.answer_1 && <li>Pregunta 1: {selectedSession.answer_1}</li>}
-                    {selectedSession.answer_2 && <li>Pregunta 2: {selectedSession.answer_2}</li>}
-                    {selectedSession.answer_3 && <li>Pregunta 3: {selectedSession.answer_3}</li>}
-                  </ul>
-                </div>
-                {selectedSession.rating && (
-                  <div>
-                    <p className="font-semibold">Calificación:</p>
-                    <div className="flex gap-1">
-                      {[...Array(5)].map((_, i) => (
-                        <span key={i} className="text-2xl">
-                          {i < selectedSession.rating ? '⭐' : '☆'}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+                              {/* Botones para calificación */}
+                              {session.waiting_for_admin && session.current_step === 5 && (
+                                <>
+                                  <button
+                                    onClick={() => handleFinalize(session)}
+                                    className="w-full px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition"
+                                  >
+                                    🏁 Finalizar
+                                  </button>
+                                  <button
+                                    onClick={() => handleRestart(session)}
+                                    className="w-full px-3 py-2 bg-purple-600 text-white text-sm rounded hover:bg-purple-700 transition"
+                                  >
+                                    🔄 Reiniciar
+                                  </button>
+                                </>
+                              )}
+
+                              {/* Reiniciar siempre disponible */}
+                              {!session.waiting_for_admin && (
+                                <button
+                                  onClick={() => handleRestart(session)}
+                                  className="w-full px-3 py-2 bg-purple-600 text-white text-sm rounded hover:bg-purple-700 transition"
+                                >
+                                  🔄 Reiniciar Usuario
+                                </button>
+                              )}
+
+                              {/* Bloquear IP (Solo Super Admin) */}
+                              {isSuperAdmin && !session.is_blocked && (
+                                <button
+                                  onClick={() => handleBlock(session)}
+                                  className="w-full px-3 py-2 bg-red-700 text-white text-sm rounded hover:bg-red-800 transition"
+                                >
+                                  🚫 Bloquear IP
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))
                 )}
-
-                {/* Llevar a paso específico */}
-                <div className="pt-4 border-t">
-                  <p className="font-semibold mb-2">Llevar a paso:</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[1, 2, 3, 4, 5, 6].map(step => (
-                      <button
-                        key={step}
-                        onClick={() => handleGoToStep(selectedSession, step)}
-                        className="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition text-sm"
-                      >
-                        {getStepLabel(step)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Bloquear IP (Solo Super Admin) */}
-                {isSuperAdmin && !selectedSession.is_blocked && (
-                  <button
-                    onClick={() => handleBlock(selectedSession)}
-                    className="w-full mt-4 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition font-medium"
-                  >
-                    🚫 Bloquear IP
-                  </button>
-                )}
-              </div>
-            </div>
+              </tbody>
+            </table>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

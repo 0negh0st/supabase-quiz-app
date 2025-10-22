@@ -39,30 +39,23 @@ const ModeratorManagement = ({ darkMode, onClose, superAdminId }) => {
     setFormLoading(true);
 
     try {
-      // 1. Crear usuario en Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-        email: newModEmail,
-        password: newModPassword,
-        email_confirm: true
+      // Get session token
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        throw new Error('No session found');
+      }
+
+      // Call Edge Function to create moderator
+      const { data, error } = await supabase.functions.invoke('create-moderator', {
+        body: {
+          email: newModEmail,
+          fullName: newModName,
+          password: newModPassword
+        }
       });
 
-      if (authError) throw authError;
-
-      // 2. Crear registro en admin_users
-      const { data: adminUserData, error: adminError } = await supabase
-        .from('admin_users')
-        .insert({
-          email: newModEmail,
-          full_name: newModName,
-          role: 'moderator',
-          auth_user_id: authData.user.id,
-          created_by: superAdminId,
-          is_active: true
-        })
-        .select()
-        .single();
-
-      if (adminError) throw adminError;
+      if (error) throw error;
 
       console.log('✅ Moderador creado exitosamente');
       
@@ -112,19 +105,13 @@ const ModeratorManagement = ({ darkMode, onClose, superAdminId }) => {
     if (!confirm(`¿Eliminar a ${mod.full_name}? Esta acción no se puede deshacer.`)) return;
 
     try {
-      // 1. Eliminar de admin_users (esto también eliminará de auth.users por CASCADE)
-      const { error: deleteError } = await supabase
+      // Delete from admin_users (cascade will handle auth)
+      const { error } = await supabase
         .from('admin_users')
         .delete()
         .eq('id', mod.id);
 
-      if (deleteError) throw deleteError;
-
-      // 2. Eliminar usuario de Auth
-      if (mod.auth_user_id) {
-        const { error: authError } = await supabase.auth.admin.deleteUser(mod.auth_user_id);
-        if (authError) console.error('Error eliminando usuario de auth:', authError);
-      }
+      if (error) throw error;
 
       console.log('✅ Moderador eliminado');
       loadModerators();
